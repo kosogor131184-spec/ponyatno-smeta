@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  role         String   @default("user") // "user" | "admin"
+  freeUsed     Boolean  @default(false) // использована ли бесплатная смета
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  orders       Order[]
+}
+
+model Order {
+  id             String    @id @default(cuid())
+  userId         String?
+  user           User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Для гостей (без регистрации)
+  guestEmail     String?
+  guestPhone     String?
+  deliveryMethod String?   // "email" | "whatsapp" | "telegram" | "cabinet"
+
+  // Файлы (ключи в S3)
+  originalFile   String    // S3 ключ загруженной сметы
+  originalName   String    // имя файла
+  resultFile     String?   // S3 ключ обработанной сметы
+  resultName     String?   // имя файла результата
+
+  // Статус
+  status         String    @default("pending") // "pending" | "processing" | "completed"
+  rowCount       Int?      // кол-во строк обработки
+  isFree         Boolean   @default(false) // бесплатная первая смета
+
+  // Согласие на ПД
+  consentGiven   Boolean   @default(false)
+
+  // Даты
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+  deletedAt      DateTime? // для автоудаления через 30 дней
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
