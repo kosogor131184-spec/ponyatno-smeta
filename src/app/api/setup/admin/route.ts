@@ -2,20 +2,35 @@ import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 
-// API маршрут для создания первого администратора
-// Можно вызвать один раз: POST /api/setup/admin
-// После создания админа этот маршрут следует удалить или защитить
+// GET — проверка подключения к БД
+export async function GET() {
+  try {
+    const userCount = await db.user.count();
+    return NextResponse.json({
+      status: "ok",
+      database: "connected",
+      userCount,
+    });
+  } catch (error) {
+    console.error("DB check error:", error);
+    return NextResponse.json({
+      status: "error",
+      database: "failed",
+      error: String(error),
+    }, { status: 500 });
+  }
+}
 
+// POST — создание администратора
 export async function POST(request: Request) {
   try {
-    // Проверяем, есть ли уже админ
     const existingAdmin = await db.user.findFirst({
       where: { role: "admin" },
     });
 
     if (existingAdmin) {
       return NextResponse.json(
-        { error: "Администратор уже существует. Удалите этот маршрут." },
+        { error: "Администратор уже существует", email: existingAdmin.email },
         { status: 403 }
       );
     }
@@ -30,13 +45,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // Проверяем, существует ли пользователь с таким email
     const existingUser = await db.user.findUnique({
       where: { email },
     });
 
     if (existingUser) {
-      // Обновляем роль на admin
       await db.user.update({
         where: { email },
         data: { role: "admin" },
@@ -47,7 +60,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Создаём нового админа
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
@@ -70,7 +82,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Setup admin error:", error);
     return NextResponse.json(
-      { error: "Ошибка при создании администратора" },
+      { error: "Ошибка при создании администратора", details: String(error) },
       { status: 500 }
     );
   }
