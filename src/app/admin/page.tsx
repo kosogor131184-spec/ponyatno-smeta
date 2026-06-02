@@ -33,9 +33,13 @@ interface Order {
   createdAt: string;
   userEmail: string | null;
   guestEmail: string | null;
+  guestPhone: string | null;
+  deliveryMethod: string;
   filename: string;
   status: "pending" | "processing" | "completed";
   resultUrl?: string;
+  originalUrl?: string;
+  isFree?: boolean;
 }
 
 const statusConfig = {
@@ -62,6 +66,7 @@ export default function AdminPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchOrders = useCallback(async () => {
@@ -70,8 +75,11 @@ export default function AdminPage() {
       if (res.ok) {
         const data = await res.json();
         setOrders(data.orders || []);
+      } else {
+        console.error("Failed to fetch orders:", res.status, await res.text());
       }
-    } catch {
+    } catch (err) {
+      console.error("Fetch orders error:", err);
       toast.error("Ошибка загрузки заказов");
     } finally {
       setLoading(false);
@@ -92,6 +100,50 @@ export default function AdminPage() {
     }
   }, [status, session, router, fetchOrders]);
 
+  const handleDownloadOriginal = async (orderId: string, filename: string) => {
+    setDownloadingId(orderId);
+    try {
+      const res = await fetch(`/api/orders/download?orderId=${orderId}&type=original`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.downloadUrl) {
+          window.open(data.downloadUrl, "_blank");
+        } else {
+          toast.error("Не удалось получить ссылку на скачивание");
+        }
+      } else {
+        const data = await res.json().catch(() => ({ error: "Ошибка" }));
+        toast.error("Ошибка скачивания", { description: data.error || "Не удалось скачать файл" });
+      }
+    } catch {
+      toast.error("Ошибка скачивания файла");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleDownloadResult = async (orderId: string) => {
+    setDownloadingId(orderId);
+    try {
+      const res = await fetch(`/api/orders/download?orderId=${orderId}&type=result`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.downloadUrl) {
+          window.open(data.downloadUrl, "_blank");
+        } else {
+          toast.error("Не удалось получить ссылку на скачивание");
+        }
+      } else {
+        const data = await res.json().catch(() => ({ error: "Ошибка" }));
+        toast.error("Ошибка скачивания", { description: data.error || "Не удалось скачать файл" });
+      }
+    } catch {
+      toast.error("Ошибка скачивания файла");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
   const handleUploadResult = async (orderId: string, file: File) => {
     setUploadingId(orderId);
     try {
@@ -108,7 +160,7 @@ export default function AdminPage() {
         toast.success("Результат загружен", { description: "Заказ отмечен как выполненный" });
         fetchOrders();
       } else {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ error: "Ошибка" }));
         toast.error("Ошибка", { description: data.error || "Не удалось загрузить результат" });
       }
     } catch {
@@ -134,6 +186,25 @@ export default function AdminPage() {
     input.click();
   };
 
+  const handleUpdateStatus = async (orderId: string, newStatus: string) => {
+    try {
+      const res = await fetch("/api/admin/orders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, status: newStatus }),
+      });
+      if (res.ok) {
+        toast.success("Статус обновлён");
+        fetchOrders();
+      } else {
+        const data = await res.json().catch(() => ({ error: "Ошибка" }));
+        toast.error("Ошибка", { description: data.error || "Не удалось обновить статус" });
+      }
+    } catch {
+      toast.error("Ошибка обновления статуса");
+    }
+  };
+
   if (status === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#FAFBFC]">
@@ -146,7 +217,6 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-[#FAFBFC]">
-      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
           <Link href="/" className="flex items-center gap-2.5 group">
@@ -178,7 +248,6 @@ export default function AdminPage() {
             <p className="text-gray-500 mt-1">Управление заказами и загрузка результатов</p>
           </div>
 
-          {/* Orders Table */}
           <Card className="border border-gray-100 shadow-lg rounded-2xl">
             <CardHeader className="pb-3 pt-6 px-6">
               <div className="flex items-center justify-between">
@@ -215,16 +284,24 @@ export default function AdminPage() {
                       <TableRow>
                         <TableHead>ID</TableHead>
                         <TableHead>Дата</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Файл</TableHead>
+                        <TableHead>Клиент</TableHead>
+                        <TableHead>Доставка</TableHead>
+                        <TableHead>Оригинал</TableHead>
                         <TableHead>Статус</TableHead>
-                        <TableHead className="text-right">Результат</TableHead>
+                        <TableHead className="text-right">Действия</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {orders.map((order) => {
-                        const st = statusConfig[order.status];
-                        const email = order.userEmail || order.guestEmail || "—";
+                        const st = statusConfig[order.status as keyof typeof statusConfig] || statusConfig.pending;
+                        const email = order.userEmail || order.guestEmail || "\u2014";
+                        const phone = order.guestPhone || "";
+                        const deliveryLabel =
+                          order.deliveryMethod === "email" ? "Email" :
+                          order.deliveryMethod === "whatsapp" ? "WhatsApp" :
+                          order.deliveryMethod === "telegram" ? "Telegram" :
+                          "Кабинет";
+                        const shortName = order.filename.length > 20 ? order.filename.slice(0, 17) + "..." : order.filename;
                         return (
                           <TableRow key={order.id}>
                             <TableCell className="font-mono text-xs text-gray-400">
@@ -239,50 +316,77 @@ export default function AdminPage() {
                                 minute: "2-digit",
                               })}
                             </TableCell>
-                            <TableCell className="text-sm text-gray-700 max-w-[180px] truncate">
-                              {email}
+                            <TableCell className="text-sm text-gray-700 max-w-[160px]">
+                              <div className="truncate">{email}</div>
+                              {phone && <div className="text-xs text-gray-400 truncate">{phone}</div>}
                             </TableCell>
-                            <TableCell className="font-medium text-gray-900 text-sm max-w-[180px] truncate">
-                              {order.filename}
+                            <TableCell className="text-xs text-gray-500">
+                              {deliveryLabel}
+                              {order.isFree && <span className="ml-1 text-amber-500">(бесплатно)</span>}
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant="outline"
-                                className={`${st.color} text-xs gap-1 font-medium`}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                disabled={downloadingId === order.id}
+                                onClick={() => handleDownloadOriginal(order.id, order.filename)}
+                                title={order.filename}
                               >
-                                {st.icon}
-                                {st.label}
-                              </Badge>
+                                {downloadingId === order.id ? (
+                                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                ) : (
+                                  <Download className="w-4 h-4 mr-1" />
+                                )}
+                                {shortName}
+                              </Button>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                <Badge
+                                  variant="outline"
+                                  className={st.color + " text-xs gap-1 font-medium cursor-pointer"}
+                                  onClick={() => {
+                                    if (order.status === "pending") handleUpdateStatus(order.id, "processing");
+                                    if (order.status === "processing") handleUpdateStatus(order.id, "completed");
+                                  }}
+                                  title="Нажмите для смены статуса"
+                                >
+                                  {st.icon}
+                                  {st.label}
+                                </Badge>
+                              </div>
                             </TableCell>
                             <TableCell className="text-right">
-                              {order.status === "completed" && order.resultUrl ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
-                                  asChild
-                                >
-                                  <a href={order.resultUrl} download>
+                              <div className="flex items-center justify-end gap-1">
+                                {order.status === "completed" ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                                    disabled={downloadingId === order.id}
+                                    onClick={() => handleDownloadResult(order.id)}
+                                  >
                                     <Download className="w-4 h-4 mr-1" />
-                                    Скачать
-                                  </a>
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="rounded-xl text-amber-600 border-amber-200 hover:bg-amber-50"
-                                  disabled={uploadingId === order.id}
-                                  onClick={() => handleFileSelect(order.id)}
-                                >
-                                  {uploadingId === order.id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                                  ) : (
-                                    <Upload className="w-4 h-4 mr-1" />
-                                  )}
-                                  Загрузить
-                                </Button>
-                              )}
+                                    Результат
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="rounded-xl text-amber-600 border-amber-200 hover:bg-amber-50"
+                                    disabled={uploadingId === order.id}
+                                    onClick={() => handleFileSelect(order.id)}
+                                  >
+                                    {uploadingId === order.id ? (
+                                      <Loader2 className="w-4 h-4 animate-spin mr-1" />
+                                    ) : (
+                                      <Upload className="w-4 h-4 mr-1" />
+                                    )}
+                                    Загрузить результат
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
@@ -296,7 +400,6 @@ export default function AdminPage() {
         </motion.div>
       </main>
 
-      {/* Hidden file input */}
       <input ref={fileInputRef} type="file" className="hidden" />
     </div>
   );
